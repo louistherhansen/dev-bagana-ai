@@ -1,0 +1,31 @@
+# =========================
+# CREW AI STACK
+# =========================
+crewai==0.186.1
+chromadb==1.0.12
+
+# =========================
+# FastAPI Stack
+# =========================
+fastapi==0.115.9
+uvicorn[standard]
+
+# =========================
+# Database
+# =========================
+psycopg2-binary==2.9.7
+bcrypt>=4.1.2
+
+# =========================
+# Auth & Security
+# =========================
+passlib[bcrypt]==1.7.4
+bcrypt>=4.1.2
+python-multipart
+python-jose[cryptography]
+
+# =========================
+# Config
+# =========================
+pyyaml
+python-dotenv

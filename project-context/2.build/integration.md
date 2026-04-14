@@ -84,8 +84,24 @@ BAGANA AI is an AI-powered platform designed for KOL, influencer, and content cr
 2. **Frontend:** crewAdapter.run() takes last user message, POSTs to /api/crew with JSON body { message }.
 3. **API (route.ts):** Parses body; builds payload { user_input, message, campaign_context }; spawns `python -m crew.run --stdin`; writes JSON payload to stdin; reads JSON from stdout; returns result or 500 with error.
 4. **Python (crew/run.py):** --stdin mode reads JSON, calls kickoff(payload), writes { status, output, task_outputs } or { status, error } to stdout.
-5. **Crew:** build_crew() from YAML; crew.kickoff(inputs); plan_content → analyze_sentiment, research_trends (context from plan).
-6. **Frontend:** On 200 and status !== "error", displays data.output as assistant message; on error, displays "Crew error: ..." or "Error: ...".
+5. **Crew:** build_crew() from YAML; crew.kickoff(inputs); three agents run: **Content Planner** → **Sentiment Analyst** → **Trend Researcher** (context from plan). Output: output (string) and task_outputs (array of { task, output }).
+6. **Frontend:** On 200 and status !== "error", displays data.output (or combined task_outputs if output empty) as assistant message; on error, displays "Crew error: ..." or "Error: ...".
+
+### 6.1 End-to-end flow: Chat → CrewAI (3 agents) → PostgreSQL → Plans / Sentiment / Trends
+
+The correct integration flow is:
+
+| Step | Component | Action |
+|------|-----------|--------|
+| 1 | User | Sends message at **http://127.0.0.1:3000/chat** (e.g. brand/campaign brief). |
+| 2 | Frontend | POST /api/crew with { message }; crewAdapter in ChatRuntimeProvider. |
+| 3 | API | app/api/crew/route.ts spawns `python -m crew.run --stdin`, passes payload, returns { status, output, task_outputs }. |
+| 4 | CrewAI | crew/run.py runs 3 agents in sequence: **Content Planner** (create_content_plan), **Sentiment Analyst** (analyze_sentiment), **Trend Researcher** (research_trends). Requires OPENROUTER_API_KEY or OPENAI_API_KEY in .env. |
+| 5 | Frontend (on success) | ChatRuntimeProvider extracts from task_outputs and saves to DB: extractAndSaveContentPlan → POST /api/content-plans; extractAndSaveSentimentAnalysis → POST /api/sentiment-analysis; extractAndSaveTrends → POST /api/trends. |
+| 6 | PostgreSQL | content_plans, sentiment_analyses, market_trends tables store results (via lib/db and API routes). |
+| 7 | Menus | **Plans** (/plans), **Sentiment** (/sentiment), **Trends** (/trends) pages load data from GET /api/content-plans, GET /api/sentiment-analysis, GET /api/trends and display via ContentPlansView, SentimentAnalysisView, TrendInsightsView. |
+
+If crew returns no text output, the user sees: *"Crew finished with no text output. Check .env (OPENROUTER_API_KEY or OPENAI_API_KEY) and logs at project-context/2.build/logs/trace.log."* Backend (crew/run.py) builds output from task_outputs when raw is empty so valid runs should always return content.
 
 ---
 
@@ -139,11 +155,10 @@ BAGANA AI is an AI-powered platform designed for KOL, influencer, and content cr
 
 To use [OpenRouter](https://openrouter.ai) instead of OpenAI, set in `.env` (do not commit `.env`):
 
-- **OPENAI_API_KEY** — set to your OpenRouter API key (e.g. from openrouter.ai keys).
-- **OPENAI_BASE_URL** — `https://openrouter.ai/api/v1`
-- **OPENAI_MODEL** — e.g. `openai/gpt-4o-mini`
+- **OPENROUTER_API_KEY** — set to your OpenRouter API key (from https://openrouter.ai/settings/keys). Preferred; crew/run.py uses it as OPENAI_API_KEY when set.
+- Or **OPENAI_API_KEY** plus **OPENAI_BASE_URL** — `https://openrouter.ai/api/v1`, **OPENAI_MODEL** — e.g. `openai/gpt-4o-mini`.
 
-CrewAI/litellm read these env vars when `llm: openai` is used in agent config. Documented in `env.example`. No code changes required.
+CrewAI reads these env vars when `llm: openai` is used in agent config. Documented in `env.example`.
 
 ---
 
@@ -157,7 +172,24 @@ CrewAI/litellm read these env vars when `llm: openai` is used in agent config. D
 | **No streaming** | Medium | User sees loading until full response; long runs feel unresponsive. | P1: implement streaming from crew to API to client (SAD §6). |
 | **Python not on PATH or wrong name** | Medium | API spawn fails; "Failed to start crew" or process error. Frontend shows "Error: ...". | Use `python` (Windows) or `python3` (Unix) per route.ts; ensure crewai installed in that env. |
 | **Non-JSON or empty stdout from crew** | Low | API may reject or throw; frontend shows generic "Error: ...". | Backend always writes JSON in --stdin mode; if process crashes before write, stdout may be empty. |
+| **Crew finished with no text output** | High | API returns 500; frontend shows "Crew finished with no text output. Check .env (OPENROUTER_API_KEY or OPENAI_API_KEY) and logs at project-context/2.build/logs/trace.log." | Set OPENROUTER_API_KEY (or OPENAI_API_KEY) in .env at project root; crew/run.py builds output from task_outputs when raw is empty. **Docker:** Backend image uses crewai>=1.0; rebuild with `docker compose build backend` and ensure .env is passed (OPENROUTER_API_KEY). If using an older image with crewai 0.30, see §8.1. |
 | **Round-trip test script requires server** | Low | scripts/test-chat-roundtrip.mjs fails with "fetch failed" if npm run dev is not running. | Start dev server first; document in README or integration.md. |
+
+### 8.1 Chat in Docker (http://127.0.0.1:3000/chat)
+
+Chat **can** work in Docker. Required:
+
+1. **Backend image must use CrewAI 1.x.**  
+   In `Full-Stack HITL with FastAPI Backend/requirements.txt`, use `crewai>=1.0,<2`. Older images that pulled crewai 0.30 can cause `'str' object has no attribute 'bind'` or empty output, because 0.30 has different APIs (no top-level LLM, different tool API).
+
+2. **Rebuild backend after changing requirements:**  
+   `docker compose build backend` then `docker compose up -d`.
+
+3. **.env at project root** must contain `OPENROUTER_API_KEY` (or `OPENAI_API_KEY`). Docker Compose passes these into the backend container.
+
+4. **If you still see "Crew finished with no text output":**  
+   - Check `docker exec bagana-ai-backend cat /app/storage/crew_result.json` — if it shows `"status":"error"`, the message is the real cause.  
+   - Rebuild backend so it uses crewai 1.x: `docker compose build --no-cache backend` then `docker compose up -d`.
 
 ---
 
@@ -176,11 +208,16 @@ CrewAI/litellm read these env vars when `llm: openai` is used in agent config. D
 
 | File | Role |
 |------|------|
-| components/ChatRuntimeProvider.tsx | crewAdapter; useLocalRuntime; POST /api/crew; error handling |
-| app/api/crew/route.ts | POST/GET handlers; runCrew(); spawn crew.run --stdin; timeout |
-| crew/run.py | --stdin mode; kickoff(); JSON in/out |
+| components/ChatRuntimeProvider.tsx | crewAdapter; POST /api/crew; extractAndSaveContentPlan, extractAndSaveSentimentAnalysis, extractAndSaveTrends → save to DB; display output or task_outputs |
+| app/api/crew/route.ts | POST/GET handlers; runCrew(); spawn crew.run --stdin; timeout; validate key |
+| crew/run.py | --stdin mode; kickoff(); 3 agents (Content Planner, Sentiment Analyst, Trend Researcher); builds output from task_outputs when raw empty; JSON in/out |
+| app/api/content-plans/route.ts | GET/POST content plans → PostgreSQL content_plans, plan_versions, plan_talents |
+| app/api/sentiment-analysis/route.ts | GET/POST sentiment analyses → PostgreSQL sentiment_analyses |
+| app/api/trends/route.ts | GET/POST market trends → PostgreSQL market_trends |
 | app/chat/page.tsx | Chat page; ChatRuntimeProvider + ChatInterface |
+| app/plans/page.tsx, app/sentiment/page.tsx, app/trends/page.tsx | Plans, Sentiment, Trends menus; load from APIs and display via ContentPlansView, SentimentAnalysisView, TrendInsightsView |
 | scripts/test-chat-roundtrip.mjs | Basic round-trip test: GET and POST /api/crew (run with npm run dev) |
+| scripts/test-chat-aqua.ps1 | Manual test with Aqua topic; validates key and POST /api/crew |
 
 ---
 

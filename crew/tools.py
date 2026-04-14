@@ -4,7 +4,23 @@ SAD §2, §4: File I/O, schema validation. MVP uses stubs; no external APIs.
 Per backend-eng prohibited-actions: no persistent storage, analytics, or external integrations.
 """
 
-from crewai.tools import tool
+# CrewAI 0.30 in Docker may not export tool; agents need Tool instances with .bind(), not plain functions.
+TOOLS_AVAILABLE = False
+try:
+    from crewai.tools import tool
+    TOOLS_AVAILABLE = True
+except ImportError:
+    try:
+        from crewai import tool
+        TOOLS_AVAILABLE = True
+    except ImportError:
+        def tool(name_or_fn=None):
+            """No-op when crewai.tool missing (CrewAI 0.30). run.py will pass tools=[] to agents."""
+            if callable(name_or_fn):
+                return name_or_fn
+            def dec(fn):
+                return fn
+            return dec
 
 
 @tool("Validate plan schema")

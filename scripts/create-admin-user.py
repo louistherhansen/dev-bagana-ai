@@ -14,9 +14,9 @@ import hashlib
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", "5432")),
-    "database": os.getenv("DB_NAME", "bagana-ai-cp"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "123456")
+    "database": os.getenv("DB_NAME", "bagana_ai"),
+    "user": os.getenv("DB_USER", "bagana_user"),
+    "password": os.getenv("DB_PASSWORD", "123456"),
 }
 
 def hash_password_simple(password: str) -> str:

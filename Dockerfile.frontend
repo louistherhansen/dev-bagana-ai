@@ -1,78 +1,14 @@
-# Multi-stage build for Next.js Frontend
-FROM node:18-alpine AS deps
+FROM node:18-slim
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Frontend app lives in ./frontend (npm workspace package)
+COPY frontend/package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install
 
-# Builder stage
-FROM node:18-alpine AS builder
+COPY frontend/ ./
 
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install all dependencies (including dev dependencies for build)
-RUN npm ci
-
-# Copy application code
-COPY . .
-
-# Set build-time environment variables
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
-# Build Next.js application
-RUN npm run build
-
-# Production runner stage
-FROM node:18-alpine AS runner
-
-WORKDIR /app
-
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-
-# Install dependencies needed for native modules (bcrypt, sharp)
-RUN apk add --no-cache libc6-compat python3 make g++
-
-# Create non-root user for security
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
-
-# Copy package files for installing production dependencies
-COPY --from=builder /app/package*.json ./
-
-# Install production dependencies (including native modules)
-RUN npm ci --only=production && \
-    npm rebuild bcrypt --build-from-source && \
-    npm cache clean --force
-
-# Copy necessary files from builder
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-
-# Set proper permissions
-RUN chown -R nextjs:nodejs /app
-
-# Switch to non-root user
-USER nextjs
-
-# Expose port
 EXPOSE 3000
 
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
-
-# Start the application
-CMD ["node", "server.js"]
+CMD ["npm", "run", "dev"]

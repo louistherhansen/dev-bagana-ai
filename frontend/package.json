@@ -1,0 +1,39 @@
+{
+  "name": "bagana-ai",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
+    "dev": "next dev -p 3000",
+    "dev:clean": "npx kill-port 3000 3001 3002 3003 3004 && next dev -p 3000",
+    "build": "next build && node scripts/remove-middleware-build.js",
+    "start": "next start",
+    "lint": "next lint",
+    "validate-key": "node scripts/validate-openrouter-key.mjs",
+    "test:login": "npx tsx scripts/test-login.ts",
+    "test:login-db": "node scripts/test-login-from-db.mjs"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "^0.12.3",
+    "@types/bcrypt": "^6.0.0",
+    "@types/nodemailer": "^6.4.14",
+    "@types/pg": "^8.16.0",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.2.3",
+    "next": "14.2.18",
+    "nodemailer": "^6.9.15",
+    "pg": "^8.18.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.0.0"
+  }
+}

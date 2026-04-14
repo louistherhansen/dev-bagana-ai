@@ -1,63 +1,29 @@
-# Multi-stage build for FastAPI Backend
-FROM python:3.10-slim AS builder
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies for building
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    build-essential \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements files
-COPY requirements.txt ./
-# Copy backend requirements - use wildcard to handle path with spaces
-COPY ["Full-Stack HITL with FastAPI Backend/requirements.txt", "backend-requirements.txt"]
+# Copy requirements (asumsi file ini ada di root atau folder backend)
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r backend-requirements.txt && \
-    pip install --no-cache-dir uvicorn[standard] gunicorn
+# --- PERBAIKAN COPY ---
+# Copy semua folder pendukung CrewAI dari root ke dalam container
+COPY backend/ ./backend/
+COPY crew/ ./crew/
+COPY config/ ./config/
+COPY scripts/ ./scripts/
+# Jika ada main.py di root, copy juga:
+# COPY main.py . 
 
-# Production stage
-FROM python:3.10-slim AS runner
+ENV PYTHONPATH=/app
 
-WORKDIR /app
-
-# Install runtime dependencies only
-RUN apt-get update && apt-get install -y \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/storage && \
-    chown -R appuser:appuser /app
-
-# Copy Python dependencies from builder
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Copy application code
-COPY --chown=appuser:appuser crew/ ./crew/
-COPY --chown=appuser:appuser config/ ./config/
-# Copy backend folder - use array format for path with spaces
-COPY --chown=appuser:appuser ["Full-Stack HITL with FastAPI Backend", "./backend"]
-
-# Set working directory to backend
-WORKDIR /app/backend
-
-# Switch to non-root user
-USER appuser
-
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
-
-# Run application with gunicorn for production
-CMD ["gunicorn", "main:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "120"]
+# Pastikan path ini sesuai dengan lokasi main.py yang baru digabungkan
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

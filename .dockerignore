@@ -1,103 +1,24 @@
-# Dependencies
-node_modules
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Build outputs
-.next
-out
-dist
-build
-*.tsbuildinfo
-
-# Environment files
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+venv/
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env*.local
 
-# Git
-.git
-.gitignore
-.gitattributes
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.next/
+.env
 
-# IDE
-.vscode
-.idea
-*.swp
-*.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Testing
-coverage
-.nyc_output
-*.test.ts
-*.test.tsx
-*.spec.ts
-*.spec.tsx
-
-# Documentation
-*.md
-docs/
-!README.md
-
-# Python
-__pycache__
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
-.venv
-*.egg-info
-.pytest_cache
-.coverage
-htmlcov/
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
 # Docker
-docker-compose*.yml
-Dockerfile*
-.dockerignore
-
-# Production folder (already has its own dockerfiles)
-production/
-
-# Other project folders
-landing-page/
-video/
-Streaming Testing/
-Task Queue testing/
-Webhook-Based HITL (Enterprise)/
-# Full-Stack HITL with FastAPI Backend/ - NEEDED for backend Dockerfile
-REST API Integration (Simple GET-POST)/
-Task-Level Human Input (Simple Console Approval)/
-WebSocket Testing/
-Flow-Level @human_feedback Decorator/
-
-# Scripts (keep only necessary ones)
-scripts/
-!scripts/init-scripts/
-
-# Project context
-project-context/
-
-# Cursor
-.cursor/
+*.dockerignore
+Dockerfile

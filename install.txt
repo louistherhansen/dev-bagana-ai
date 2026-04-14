@@ -1,7 +1,0 @@
- uv venv  
- uv pip install aamad
- uv run aamad init  
-
-PRD :
- @.cursor/agents/product-mgr.md *create-prd and use templete @.cursor/templates/prd-template.md and usecase @usecase.txt 
-

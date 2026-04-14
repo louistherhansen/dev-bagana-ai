@@ -26,6 +26,7 @@ __pycache__/
 *.so
 .venv/
 venv/
+venv_bagana/
 .env/
 .Python
 *.egg-info/
@@ -53,6 +54,7 @@ CREWAI_STORAGE_DIR/
 .next/
 out/
 node_modules/
+*.tsbuildinfo
 
 # Vercel
 .vercel
