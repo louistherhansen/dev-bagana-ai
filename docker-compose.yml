@@ -56,13 +56,10 @@ services:
       BACKEND_API_URL: http://backend:8000
       USE_BACKEND_API: "true"
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      # Hanya override host/port Docker; DB_NAME, DB_USER, DB_PASSWORD, SECRET_KEY dari env_file .env
+      # (jangan DB_PASSWORD: ${DB_PASSWORD} di sini — kalau interpolasi Compose kosong, menimpa env_file).
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_NAME: ${DB_NAME:-bagana_ai_cp}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD}
-      # Harus sama dengan service backend agar header X-Bagana-Crew-Internal valid
-      SECRET_KEY: ${SECRET_KEY:-super-secret-key}
     ports:
       - "3000:3000"
     depends_on:
