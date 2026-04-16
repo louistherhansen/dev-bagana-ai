@@ -31,8 +31,7 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       SECRET_KEY: ${SECRET_KEY:-super-secret-key}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      # OPENAI_* / OPENROUTER_*: hanya dari env_file .env (hindari warning Compose + timpa kosong)
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001
     ports:
       - "8000:8000"
