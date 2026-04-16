@@ -9,6 +9,9 @@ loadProjectEnv();
 
 export const runtime = 'nodejs';
 
+/** Bump when deploy debugging; log helps confirm VPS runs this file (not an old bundle). */
+const CREW_ROUTE_REVISION = "fastapi-proxy-2026-04-17";
+
 // Constants
 const CREW_TIMEOUT_MS = 300_000; 
 const CREW_CLOUD_POLL_MS = 3_000;
@@ -104,6 +107,7 @@ async function runCrewBackend(payload: Record<string, unknown>, request: NextReq
 
 export async function POST(request: NextRequest) {
   try {
+    console.log("[/api/crew] revision=%s NODE_ENV=%s", CREW_ROUTE_REVISION, process.env.NODE_ENV);
     const body = await request.json().catch(() => ({}));
     const message = body.message ?? body.user_input ?? "";
 
