@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getUserBySessionToken } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { getFastAPIBaseUrl, fastAPIProxyHeaders } from "@/lib/fastapi-proxy";
 
@@ -40,12 +41,72 @@ export interface ContentPlan {
   updatedAt: number;
 }
 
+function getSessionTokenFromRequest(request: NextRequest): string | null {
+  const h = request.headers.get("Authorization");
+  if (h?.startsWith("Bearer ")) return h.slice(7).trim();
+  return request.cookies.get("auth_token")?.value ?? null;
+}
+
+async function requireSessionUser(request: NextRequest) {
+  const token = getSessionTokenFromRequest(request);
+  if (!token) return null;
+  return await getUserBySessionToken(token);
+}
+
+const CONTENT_PLANS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS content_plans (
+    id VARCHAR(255) PRIMARY KEY,
+    title VARCHAR(500) NOT NULL,
+    campaign VARCHAR(500),
+    brand_name VARCHAR(255),
+    conversation_id VARCHAR(255),
+    schema_valid BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS plan_versions (
+    id VARCHAR(255) PRIMARY KEY,
+    plan_id VARCHAR(255) NOT NULL REFERENCES content_plans(id) ON DELETE CASCADE,
+    version VARCHAR(50) NOT NULL,
+    content JSONB NOT NULL,
+    metadata JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_plan_version UNIQUE(plan_id, version)
+  );
+  CREATE TABLE IF NOT EXISTS plan_talents (
+    plan_id VARCHAR(255) NOT NULL REFERENCES content_plans(id) ON DELETE CASCADE,
+    talent_name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (plan_id, talent_name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_content_plans_brand_name ON content_plans(brand_name);
+  CREATE INDEX IF NOT EXISTS idx_content_plans_updated_at ON content_plans(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_plan_versions_plan_id ON plan_versions(plan_id);
+  CREATE INDEX IF NOT EXISTS idx_plan_talents_plan_id ON plan_talents(plan_id);
+`;
+
+async function ensureContentPlansTables(): Promise<void> {
+  const statements = CONTENT_PLANS_TABLE_SQL.split(";").map((s) => s.trim()).filter(Boolean);
+  for (const stmt of statements) {
+    try {
+      await query(stmt);
+    } catch {
+      // ignore (fallback best-effort)
+    }
+  }
+}
+
 /**
  * GET /api/content-plans
  * Get all content plans or a specific plan by ID
  */
 export async function GET(request: NextRequest) {
   try {
+    const sessionUser = await requireSessionUser(request);
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const planId = searchParams.get("id");
     const brandName = searchParams.get("brand_name");
@@ -57,21 +118,142 @@ export async function GET(request: NextRequest) {
       backendUrl.searchParams.append("brand_name", brandName);
     }
 
-    const response = await fetch(backendUrl.toString(), {
-      headers: fastAPIProxyHeaders(request),
-    });
+    try {
+      const response = await fetch(backendUrl.toString(), {
+        headers: fastAPIProxyHeaders(request, undefined, { includeInternal: true }),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Backend FastAPI GET error:", response.status, errorText);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Backend FastAPI GET error:", response.status, errorText);
+        return NextResponse.json(
+          { error: response.status === 401 ? "Unauthorized" : `Backend error: ${errorText}` },
+          { status: response.status }
+        );
+      }
+
+      const data = await response.json();
+      return NextResponse.json(data, { status: response.status });
+    } catch (err) {
+      // FastAPI backend unavailable → fallback to local Postgres
+      await ensureContentPlansTables();
+
+      if (planId) {
+        const planRes = await query<{
+          id: string;
+          title: string;
+          campaign: string | null;
+          brand_name: string | null;
+          conversation_id: string | null;
+          schema_valid: boolean;
+          created_at: Date;
+          updated_at: Date;
+        }>(
+          "SELECT id, title, campaign, brand_name, conversation_id, schema_valid, created_at, updated_at FROM content_plans WHERE id = $1",
+          [planId]
+        );
+        if (planRes.rows.length === 0) {
+          return NextResponse.json({ error: "Content plan not found" }, { status: 404 });
+        }
+
+        const versionsRes = await query<{
+          id: string;
+          version: string;
+          content: any;
+          metadata: any;
+          created_at: Date;
+        }>(
+          "SELECT id, version, content, metadata, created_at FROM plan_versions WHERE plan_id = $1 ORDER BY created_at DESC",
+          [planId]
+        );
+
+        const talentsRes = await query<{ talent_name: string }>(
+          "SELECT talent_name FROM plan_talents WHERE plan_id = $1 ORDER BY talent_name",
+          [planId]
+        );
+
+        const p = planRes.rows[0];
+        return NextResponse.json(
+          {
+            id: p.id,
+            title: p.title,
+            campaign: p.campaign ?? undefined,
+            brandName: p.brand_name ?? undefined,
+            conversationId: p.conversation_id ?? undefined,
+            schemaValid: !!p.schema_valid,
+            talents: talentsRes.rows.map((r) => r.talent_name),
+            versions: versionsRes.rows.map((r) => ({
+              id: r.id,
+              version: r.version,
+              content: r.content,
+              metadata: r.metadata ?? undefined,
+              createdAt: r.created_at instanceof Date ? r.created_at.getTime() : Date.now(),
+            })),
+            createdAt: p.created_at instanceof Date ? p.created_at.getTime() : Date.now(),
+            updatedAt: p.updated_at instanceof Date ? p.updated_at.getTime() : Date.now(),
+          },
+          { status: 200 }
+        );
+      }
+
+      const params: any[] = [];
+      let sql =
+        "SELECT id, title, campaign, brand_name, schema_valid, updated_at FROM content_plans";
+      if (brandName) {
+        sql += " WHERE brand_name = $1";
+        params.push(brandName);
+      }
+      sql += " ORDER BY updated_at DESC LIMIT 100";
+      const listRes = await query<{
+        id: string;
+        title: string;
+        campaign: string | null;
+        brand_name: string | null;
+        schema_valid: boolean;
+        updated_at: Date;
+      }>(sql, params);
+
+      const planIds = listRes.rows.map((r) => r.id).filter(Boolean);
+      if (planIds.length === 0) {
+        return NextResponse.json([], { status: 200 });
+      }
+
+      // talents per plan
+      const talentsAgg = await query<{ plan_id: string; talents: string[] }>(
+        `SELECT plan_id, ARRAY_AGG(talent_name ORDER BY talent_name) AS talents
+         FROM plan_talents
+         WHERE plan_id = ANY($1::varchar[])
+         GROUP BY plan_id`,
+        [planIds]
+      );
+      const talentsMap = new Map<string, string[]>();
+      for (const r of talentsAgg.rows) talentsMap.set(r.plan_id, (r as any).talents || []);
+
+      // latest version per plan
+      const latestVer = await query<{ plan_id: string; version: string }>(
+        `SELECT DISTINCT ON (plan_id) plan_id, version
+         FROM plan_versions
+         WHERE plan_id = ANY($1::varchar[])
+         ORDER BY plan_id, created_at DESC`,
+        [planIds]
+      );
+      const versionMap = new Map<string, string>();
+      for (const r of latestVer.rows) versionMap.set(r.plan_id, r.version);
+
       return NextResponse.json(
-        { error: `Backend error: ${errorText}` },
-        { status: response.status }
+        listRes.rows.map((p) => ({
+          id: p.id,
+          title: p.title,
+          campaign: p.campaign ?? undefined,
+          brandName: p.brand_name ?? undefined,
+          schemaValid: !!p.schema_valid,
+          talents: talentsMap.get(p.id) || [],
+          version: versionMap.get(p.id) || "v1.0",
+          updatedAt: p.updated_at instanceof Date ? p.updated_at.getTime() : Date.now(),
+        })),
+        { status: 200 }
       );
     }
-
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
   } catch (err) {
     console.error("Content plans GET error:", err);
     return NextResponse.json(
@@ -87,6 +269,11 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const sessionUser = await requireSessionUser(request);
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
 
     // Convert camelCase dari frontend ke snake_case untuk FastAPI backend
@@ -111,23 +298,96 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch(`${getFastAPIBaseUrl()}/api/content-plans/save`, {
-      method: "POST",
-      headers: fastAPIProxyHeaders(request, { "Content-Type": "application/json" }),
-      body: JSON.stringify(backendPayload),
-    });
+    try {
+      const response = await fetch(`${getFastAPIBaseUrl()}/api/content-plans/save`, {
+        method: "POST",
+        headers: fastAPIProxyHeaders(request, { "Content-Type": "application/json" }, { includeInternal: true }),
+        body: JSON.stringify(backendPayload),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Backend FastAPI error:", response.status, errorText);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Backend FastAPI error:", response.status, errorText);
+        return NextResponse.json(
+          { error: response.status === 401 ? "Unauthorized" : `Backend error: ${errorText}` },
+          { status: response.status }
+        );
+      }
+
+      const data = await response.json();
+      return NextResponse.json(data, { status: 201 });
+    } catch (err) {
+      // FastAPI backend unavailable → fallback to local Postgres
+      await ensureContentPlansTables();
+      const now = new Date();
+
+      await query(
+        `INSERT INTO content_plans (id, title, campaign, brand_name, conversation_id, schema_valid, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,COALESCE((SELECT created_at FROM content_plans WHERE id=$1), $7), $7)
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           campaign = EXCLUDED.campaign,
+           brand_name = EXCLUDED.brand_name,
+           conversation_id = EXCLUDED.conversation_id,
+           schema_valid = EXCLUDED.schema_valid,
+           updated_at = $7`,
+        [
+          backendPayload.id,
+          backendPayload.title,
+          backendPayload.campaign,
+          backendPayload.brand_name,
+          backendPayload.conversation_id,
+          backendPayload.schema_valid,
+          now,
+        ]
+      );
+
+      // talents: replace
+      await query("DELETE FROM plan_talents WHERE plan_id = $1", [backendPayload.id]).catch(() => {});
+      if (Array.isArray(backendPayload.talents)) {
+        for (const t of backendPayload.talents) {
+          const name = String(t || "").trim();
+          if (!name) continue;
+          await query(
+            "INSERT INTO plan_talents (plan_id, talent_name) VALUES ($1,$2) ON CONFLICT (plan_id, talent_name) DO NOTHING",
+            [backendPayload.id, name]
+          ).catch(() => {});
+        }
+      }
+
+      const versionId = `${backendPayload.id}_${backendPayload.version}`;
+      await query(
+        `INSERT INTO plan_versions (id, plan_id, version, content, metadata, created_at)
+         VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6)
+         ON CONFLICT (id) DO UPDATE SET
+           content = EXCLUDED.content,
+           metadata = EXCLUDED.metadata`,
+        [
+          versionId,
+          backendPayload.id,
+          backendPayload.version,
+          JSON.stringify(backendPayload.content ?? {}),
+          backendPayload.metadata ? JSON.stringify(backendPayload.metadata) : null,
+          now,
+        ]
+      );
+
       return NextResponse.json(
-        { error: `Backend error: ${errorText}` },
-        { status: response.status }
+        {
+          status: "success",
+          id: backendPayload.id,
+          title: backendPayload.title,
+          campaign: backendPayload.campaign,
+          brandName: backendPayload.brand_name,
+          conversationId: backendPayload.conversation_id,
+          schemaValid: backendPayload.schema_valid,
+          talents: backendPayload.talents,
+          version: backendPayload.version,
+          createdAt: now.getTime(),
+        },
+        { status: 201 }
       );
     }
-
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status || 201 });
   } catch (err) {
     console.error("Content plans POST error:", err);
     return NextResponse.json(

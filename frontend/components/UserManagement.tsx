@@ -40,8 +40,12 @@ export function UserManagement({ showCreateByDefault = false }: { showCreateByDe
   });
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!currentUser) return;
+    if (currentUser.role !== "admin") return;
     fetchUsers();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, currentUser?.id, currentUser?.role]);
 
   const fetchUsers = async () => {
     try {
@@ -52,9 +56,10 @@ export function UserManagement({ showCreateByDefault = false }: { showCreateByDe
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const res = await fetch("/api/users", { headers });
-      if (!res.ok) throw new Error("Failed to fetch users");
-      const data = await res.json();
+      const res = await fetch("/api/users", { headers, credentials: "include" });
+      const raw = await res.text();
+      const data = raw ? JSON.parse(raw) : {};
+      if (!res.ok) throw new Error(data.error || "Failed to fetch users");
       setUsers(data.users || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load users");
@@ -88,10 +93,11 @@ export function UserManagement({ showCreateByDefault = false }: { showCreateByDe
       const res = await fetch("/api/users", {
         method: "POST",
         headers,
+        credentials: "include",
         body: JSON.stringify(formData),
       });
-
-      const data = await res.json();
+      const raw = await res.text();
+      const data = raw ? JSON.parse(raw) : {};
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to create user");
@@ -141,10 +147,11 @@ export function UserManagement({ showCreateByDefault = false }: { showCreateByDe
       const res = await fetch(`/api/users/${editingUser.id}`, {
         method: "PUT",
         headers,
+        credentials: "include",
         body: JSON.stringify(updatePayload),
       });
-
-      const data = await res.json();
+      const raw = await res.text();
+      const data = raw ? JSON.parse(raw) : {};
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to update user");
@@ -180,11 +187,20 @@ export function UserManagement({ showCreateByDefault = false }: { showCreateByDe
       const res = await fetch(`/api/users/${userId}/toggle-active`, {
         method: "PATCH",
         headers,
+        credentials: "include",
         body: JSON.stringify({ isActive: !currentStatus }),
       });
 
       if (!res.ok) {
-        throw new Error("Failed to update user status");
+        const raw = await res.text().catch(() => "");
+        let msg = "Failed to update user status";
+        try {
+          const parsed = raw ? JSON.parse(raw) : {};
+          if (parsed?.error) msg = String(parsed.error);
+        } catch {
+          if (raw) msg = raw;
+        }
+        throw new Error(msg);
       }
 
       fetchUsers();
@@ -250,6 +266,7 @@ export function UserManagement({ showCreateByDefault = false }: { showCreateByDe
         const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
         const res = await fetch("/api/admin/bootstrap", {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),

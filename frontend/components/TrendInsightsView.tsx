@@ -1058,7 +1058,12 @@ export function TrendInsightsView() {
         {error && (
           <div className="py-4 rounded-lg bg-red-50 text-red-700 text-sm px-4">
             {error}
-            <p className="mt-2 text-xs">Pastikan database berjalan dan tabel market_trends ada (script: scripts/init-trends-db.py).</p>
+            {/(market_trends|relation .* does not exist|does not exist)/i.test(error) && (
+              <p className="mt-2 text-xs">
+                Make sure the database is running and the <code>market_trends</code> table exists (script:{" "}
+                <code>scripts/init-trends-db.py</code>).
+              </p>
+            )}
           </div>
         )}
         {!loading && !error && history.length === 0 && (

@@ -104,6 +104,25 @@ function getAuthToken(): string | null {
   return localStorage.getItem("token");
 }
 
+async function readErrorText(res: Response): Promise<string> {
+  try {
+    const txt = await res.text();
+    const raw = txt?.trim() ? txt.trim() : `HTTP ${res.status}`;
+    // Try to unwrap JSON error payloads: {error:"..."}
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && typeof (parsed as any).error === "string") {
+        return (parsed as any).error;
+      }
+    } catch {
+      /* ignore */
+    }
+    return raw;
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
+
 export async function listSentimentAnalyses(brandName?: string): Promise<SentimentAnalysisRecord[]> {
   const url = brandName
     ? `${API_BASE}?brand_name=${encodeURIComponent(brandName)}`
@@ -115,8 +134,8 @@ export async function listSentimentAnalyses(brandName?: string): Promise<Sentime
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(await res.text());
+  const res = await fetch(url, { headers, credentials: "include" });
+  if (!res.ok) throw new Error(await readErrorText(res));
   return res.json();
 }
 
@@ -128,10 +147,12 @@ export async function listSentimentBrands(): Promise<string[]> {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}/brands`, { headers });
-  if (!res.ok) throw new Error(await res.text());
+  const res = await fetch(`${API_BASE}/brands`, { headers, credentials: "include" });
+  if (!res.ok) throw new Error(await readErrorText(res));
   const data = await res.json();
-  return Array.isArray(data.brands) ? data.brands : [];
+  if (Array.isArray(data?.brands)) return data.brands;
+  if (Array.isArray(data)) return data;
+  return [];
 }
 
 export async function getSentimentAnalysis(id: string): Promise<SentimentAnalysisRecord> {
@@ -141,8 +162,8 @@ export async function getSentimentAnalysis(id: string): Promise<SentimentAnalysi
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}?id=${encodeURIComponent(id)}`, { headers });
-  if (!res.ok) throw new Error(await res.text());
+  const res = await fetch(`${API_BASE}?id=${encodeURIComponent(id)}`, { headers, credentials: "include" });
+  if (!res.ok) throw new Error(await readErrorText(res));
   return res.json();
 }
 
@@ -163,6 +184,7 @@ export async function createSentimentAnalysis(params: {
   const res = await fetch(API_BASE, {
     method: "POST",
     headers,
+    credentials: "include",
     body: JSON.stringify({
       brandName: params.brandName,
       positivePct: params.positivePct,
@@ -173,7 +195,7 @@ export async function createSentimentAnalysis(params: {
     }),
   });
   if (!res.ok) {
-    const errText = await res.text();
+    const errText = await readErrorText(res);
     console.error("createSentimentAnalysis failed:", res.status, errText.slice(0, 200));
     throw new Error(errText);
   }

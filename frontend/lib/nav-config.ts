@@ -12,6 +12,8 @@ export type NavItem = {
   badge?: string | number;
   visible?: boolean;
   order?: number;
+  /** If set, only these roles can see this item. */
+  roles?: string[];
   submenu?: NavItem[]; // Submenu items
 };
 
@@ -34,22 +36,45 @@ export const NAV_CONFIG: NavItem[] = [
     visible: true,
     submenu: [
       { href: "/plans", label: "Plans", order: 1, visible: true },
-      { href: "/reports", label: "Reports", order: 2, visible: true },
-      { href: "/optimization", label: "Optimization", order: 3, visible: true },
+      { href: "/reports", label: "Reports", order: 2, visible: true, roles: ["admin", "moderator"] },
+      { href: "/optimization", label: "Optimization", order: 3, visible: true, roles: ["admin", "moderator"] },
       { href: "/sentiment", label: "Sentiment", order: 4, visible: true },
       { href: "/trends", label: "Trends", order: 5, visible: true },
-      { href: "/review", label: "Review", order: 6, visible: true },
+      { href: "/review", label: "Review", order: 6, visible: true, roles: ["admin", "moderator"] },
     ]
   },
-  { href: "/calendar", label: "Calendar", order: 9, visible: true },
-  { href: "/settings", label: "Settings", order: 12, visible: true },
+  { href: "/calendar", label: "Calendar", order: 9, visible: true, roles: ["admin", "moderator"] },
+  { href: "/settings", label: "Settings", order: 12, visible: true, roles: ["admin", "moderator"] },
 ];
+
+function isAllowedForRole(item: NavItem, role?: string | null): boolean {
+  if (!item.roles || item.roles.length === 0) return true;
+  if (!role) return false;
+  return item.roles.includes(role);
+}
+
+function filterNavItemsByRole(items: NavItem[], role?: string | null): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of items) {
+    if (item.visible === false) continue;
+    if (!isAllowedForRole(item, role)) continue;
+
+    if (item.submenu && item.submenu.length > 0) {
+      const filteredSub = filterNavItemsByRole(item.submenu, role).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      if (filteredSub.length === 0) continue;
+      out.push({ ...item, submenu: filteredSub });
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
 
 /**
  * Get visible navigation items sorted by order
  */
-export function getNavItems(): NavItem[] {
-  return NAV_CONFIG.filter((item) => item.visible !== false).sort((a, b) => {
+export function getNavItems(role?: string | null): NavItem[] {
+  return filterNavItemsByRole(NAV_CONFIG, role).sort((a, b) => {
     const orderA = a.order ?? 999;
     const orderB = b.order ?? 999;
     return orderA - orderB;

@@ -24,7 +24,7 @@ export function AppNav({
   // Initialize with items if provided, otherwise use dynamic items if dynamic mode is enabled
   const [navItems, setNavItems] = useState<NavItem[]>(() => {
     if (items) return items;
-    if (dynamic) return getNavItems();
+    if (dynamic) return getNavItems(user?.role);
     return [];
   });
 
@@ -35,12 +35,12 @@ export function AppNav({
       setNavItems(items);
     } else if (dynamic) {
       // Otherwise, use dynamic items if dynamic mode is enabled
-      setNavItems(getNavItems());
+      setNavItems(getNavItems(user?.role));
     } else {
       // Fallback to empty array
       setNavItems([]);
     }
-  }, [dynamic, items]);
+  }, [dynamic, items, user?.role]);
 
   // Close dropdown when clicking outside (for mobile/click mode)
   useEffect(() => {

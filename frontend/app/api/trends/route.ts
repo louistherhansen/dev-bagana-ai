@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getUserBySessionToken } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { getFastAPIBaseUrl, fastAPIProxyHeaders } from "@/lib/fastapi-proxy";
+import crypto from "crypto";
 
 // Use Node.js runtime to support pg module
 export const runtime = 'nodejs';
@@ -55,8 +57,24 @@ const TRENDS_TABLE_SQL = `
 async function ensureTrendsTable(): Promise<void> {
   const statements = TRENDS_TABLE_SQL.split(";").map((s) => s.trim()).filter(Boolean);
   for (const stmt of statements) {
-    await query(stmt).catch(() => {});
+    try {
+      await query(stmt);
+    } catch {
+      // ignore (fallback best-effort)
+    }
   }
+}
+
+function getSessionTokenFromRequest(request: NextRequest): string | null {
+  const h = request.headers.get("Authorization");
+  if (h?.startsWith("Bearer ")) return h.slice(7).trim();
+  return request.cookies.get("auth_token")?.value ?? null;
+}
+
+async function requireSessionUser(request: NextRequest) {
+  const token = getSessionTokenFromRequest(request);
+  if (!token) return null;
+  return await getUserBySessionToken(token);
 }
 
 /**
@@ -181,6 +199,11 @@ function parseTrendOutput(fullOutput: string): {
 
 export async function GET(request: NextRequest) {
   try {
+    const sessionUser = await requireSessionUser(request);
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     const brandName = searchParams.get("brand_name");
@@ -192,21 +215,65 @@ export async function GET(request: NextRequest) {
       backendUrl.searchParams.append("brand_name", brandName);
     }
 
-    const response = await fetch(backendUrl.toString(), {
-      headers: fastAPIProxyHeaders(request),
-    });
+    try {
+      const response = await fetch(backendUrl.toString(), {
+        headers: fastAPIProxyHeaders(request, undefined, { includeInternal: true }),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Backend FastAPI GET error:", response.status, errorText);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Backend FastAPI GET error:", response.status, errorText);
+        return NextResponse.json(
+          { error: response.status === 401 ? "Unauthorized" : `Backend error: ${errorText}` },
+          { status: response.status }
+        );
+      }
+
+      const data = await response.json();
+      return NextResponse.json(data, { status: response.status });
+    } catch (err) {
+      // FastAPI backend unavailable → fallback to local Postgres
+      await ensureTrendsTable();
+      if (id) {
+        const res = await query(
+          "SELECT id, brand_name, full_output, conversation_id, created_at FROM market_trends WHERE id = $1",
+          [id]
+        );
+        if (res.rows.length === 0) {
+          return NextResponse.json({ error: "Not found" }, { status: 404 });
+        }
+        const r: any = res.rows[0];
+        return NextResponse.json(
+          {
+            id: r.id,
+            brandName: r.brand_name,
+            fullOutput: r.full_output ?? "",
+            conversationId: r.conversation_id ?? undefined,
+            createdAt: r.created_at instanceof Date ? r.created_at.getTime() : Date.now(),
+          },
+          { status: 200 }
+        );
+      }
+
+      const params: any[] = [];
+      let sql = "SELECT id, brand_name, full_output, conversation_id, created_at FROM market_trends";
+      if (brandName) {
+        sql += " WHERE brand_name = $1";
+        params.push(brandName);
+      }
+      sql += " ORDER BY created_at DESC LIMIT 100";
+      const res = await query(sql, params);
       return NextResponse.json(
-        { error: `Backend error: ${errorText}` },
-        { status: response.status }
+        res.rows.map((r: any) => ({
+          id: r.id,
+          brandName: r.brand_name,
+          fullOutput: r.full_output ?? "",
+          conversationId: r.conversation_id ?? undefined,
+          createdAt: r.created_at instanceof Date ? r.created_at.getTime() : Date.now(),
+        })),
+        { status: 200 }
       );
     }
-
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
   } catch (err) {
     console.error("Trends GET error:", err);
     return NextResponse.json(
@@ -218,6 +285,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const sessionUser = await requireSessionUser(request);
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
 
     // Convert camelCase dari frontend ke snake_case untuk FastAPI backend
@@ -235,23 +307,52 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch(`${getFastAPIBaseUrl()}/api/trends/save`, {
-      method: "POST",
-      headers: fastAPIProxyHeaders(request, { "Content-Type": "application/json" }),
-      body: JSON.stringify(backendPayload),
-    });
+    try {
+      const response = await fetch(`${getFastAPIBaseUrl()}/api/trends/save`, {
+        method: "POST",
+        headers: fastAPIProxyHeaders(request, { "Content-Type": "application/json" }, { includeInternal: true }),
+        body: JSON.stringify(backendPayload),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Backend FastAPI error:", response.status, errorText);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Backend FastAPI error:", response.status, errorText);
+        return NextResponse.json(
+          { error: response.status === 401 ? "Unauthorized" : `Backend error: ${errorText}` },
+          { status: response.status }
+        );
+      }
+
+      const data = await response.json();
+      const record = {
+        id: data.id,
+        brandName: data.brandName ?? backendPayload.brand_name,
+        fullOutput: data.fullOutput ?? backendPayload.full_output,
+        conversationId: data.conversationId ?? backendPayload.conversation_id ?? undefined,
+        createdAt: data.createdAt ?? Date.now(),
+      };
+      return NextResponse.json(record, { status: 201 });
+    } catch (err) {
+      // FastAPI backend unavailable → fallback to local Postgres
+      await ensureTrendsTable();
+      const id = `trend_${crypto.randomUUID().slice(0, 8)}`;
+      const now = new Date();
+      await query(
+        `INSERT INTO market_trends (id, brand_name, conversation_id, full_output, created_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [id, backendPayload.brand_name, backendPayload.conversation_id, backendPayload.full_output, now]
+      );
       return NextResponse.json(
-        { error: `Backend error: ${errorText}` },
-        { status: response.status }
+        {
+          id,
+          brandName: backendPayload.brand_name,
+          fullOutput: backendPayload.full_output,
+          conversationId: backendPayload.conversation_id ?? undefined,
+          createdAt: now.getTime(),
+        },
+        { status: 201 }
       );
     }
-
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
   } catch (err) {
     console.error("Trends POST error:", err);
     return NextResponse.json(

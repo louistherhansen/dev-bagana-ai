@@ -9,9 +9,7 @@
     "build": "next build && node scripts/remove-middleware-build.js",
     "start": "next start",
     "lint": "next lint",
-    "validate-key": "node scripts/validate-openrouter-key.mjs",
-    "test:login": "npx tsx scripts/test-login.ts",
-    "test:login-db": "node scripts/test-login-from-db.mjs"
+    "validate-key": "node scripts/validate-openrouter-key.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.12.3",

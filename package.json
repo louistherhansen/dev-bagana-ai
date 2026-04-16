@@ -11,8 +11,6 @@
     "build": "npm run build --workspace=bagana-ai",
     "start": "npm run start --workspace=bagana-ai",
     "lint": "npm run lint --workspace=bagana-ai",
-    "validate-key": "npm run validate-key --workspace=bagana-ai",
-    "test:login": "npm run test:login --workspace=bagana-ai",
-    "test:login-db": "npm run test:login-db --workspace=bagana-ai"
+    "validate-key": "npm run validate-key --workspace=bagana-ai"
   }
 }

@@ -867,7 +867,12 @@ export function SentimentAnalysisView() {
         {error && (
           <div className="py-4 rounded-lg bg-red-50 text-red-700 text-sm px-4">
             {error}
-            <p className="mt-2 text-xs">Pastikan database berjalan dan tabel sentiment_analyses ada (script: scripts/init-sentiment-db.py).</p>
+            {/(sentiment_analyses|relation .* does not exist|does not exist)/i.test(error) && (
+              <p className="mt-2 text-xs">
+                Make sure the database is running and the <code>sentiment_analyses</code> table exists (script:{" "}
+                <code>scripts/init-sentiment-db.py</code>).
+              </p>
+            )}
           </div>
         )}
         {!loading && !error && history.length === 0 && (
