@@ -26,7 +26,10 @@ services:
       - .env
     environment:
       PYTHONPATH: /app
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-123456}@postgres:5432/${DB_NAME:-bagana_ai_cp}
+      # Jangan set DATABASE_URL di sini dengan ${DB_PASSWORD}: karakter seperti @ dalam password
+      # memecah URL (host jadi "…@postgres"). backend/main.py membangun URL dengan quote_plus dari DB_*.
+      DB_HOST: postgres
+      DB_PORT: "5432"
       SECRET_KEY: ${SECRET_KEY:-super-secret-key}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
@@ -44,8 +47,19 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: bagana-ai-frontend
     restart: always
+    env_file:
+      - .env
     environment:
+      # BFF / API routes: ke FastAPI lewat nama service Docker (bukan localhost)
+      BACKEND_API_URL: http://backend:8000
+      # next dev di container: NODE_ENV≠production; paksa jalur backend untuk /api/crew
+      USE_BACKEND_API: "true"
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-bagana_ai_cp}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
       # Harus sama dengan service backend agar header X-Bagana-Crew-Internal valid
       SECRET_KEY: ${SECRET_KEY:-super-secret-key}
     ports:

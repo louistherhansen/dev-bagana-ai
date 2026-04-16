@@ -50,31 +50,42 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60  # Diperlama agar tidak cepat logout
 
 def _resolve_database_url() -> str:
     """
-    Prioritas: DATABASE_URL eksplisit (Docker).
-    Fallback: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD — selaras dengan frontend/lib/db.ts.
+    Selama DB_PASSWORD di-set, URL selalu dibuat dari DB_* dengan quote_plus (aman untuk @
+    dalam password). DATABASE_URL dari .env / docker-compose yang di-interpolasi mentah
+    **diabaikan** — itulah penyebab host salah seperti "Cl0ud@postgres".
+
+    DATABASE_URL dipakai hanya jika DB_PASSWORD kosong (mis. secret manager hanya menyimpan URL).
     """
+    user = os.getenv("DB_USER", "postgres")
+    host = (os.getenv("DB_HOST") or "").strip()
+    port = (os.getenv("DB_PORT") or "5432").strip()
+    dbname = os.getenv("DB_NAME", "bagana_ai")
+    password = (os.getenv("DB_PASSWORD") or "").strip()
+
+    if password:
+        h = host or "127.0.0.1"
+        if not host:
+            logger.warning(
+                "DB_HOST kosong — memakai %s. Di Docker set DB_HOST=postgres di compose/.env.",
+                h,
+            )
+        logger.info("Backend DB target: %s:%s/%s (DB_* + URL-encoded password)", h, port, dbname)
+        return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{h}:{port}/{dbname}"
+
     explicit = (os.getenv("DATABASE_URL") or "").strip()
     if explicit:
+        logger.info("Backend DB: using DATABASE_URL (DB_PASSWORD tidak di-set)")
         return explicit
-    password = (os.getenv("DB_PASSWORD") or "").strip()
-    if not password:
-        logger.error(
-            "DATABASE_URL kosong dan DB_PASSWORD tidak di-set. "
-            "Set DATABASE_URL atau DB_* di .env agar validasi token sesi (tabel sessions) berfungsi."
-        )
-        return ""
-    user = os.getenv("DB_USER", "postgres")
-    host = os.getenv("DB_HOST", "127.0.0.1")
-    port = os.getenv("DB_PORT", "5432")
-    dbname = os.getenv("DB_NAME", "bagana_ai")
-    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{dbname}"
+
+    logger.error(
+        "DB_PASSWORD dan DATABASE_URL kosong. "
+        "Set DB_* di .env atau DATABASE_URL agar koneksi Postgres berfungsi."
+    )
+    return ""
 
 
 DATABASE_URL = _resolve_database_url()
-if DATABASE_URL and "@" in DATABASE_URL:
-    tail = DATABASE_URL.split("@", 1)[-1]
-    logger.info("Backend DB target: %s", tail)
-else:
+if not DATABASE_URL:
     logger.warning("DATABASE_URL tidak terbentuk — auth DB akan gagal")
 
 app = FastAPI(title="BAGANA AI Backend")

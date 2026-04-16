@@ -133,19 +133,17 @@ export async function POST(request: NextRequest) {
       language: body.language || "id",
     };
 
-    const isProduction = process.env.NODE_ENV === "production";
-    const forceBackend = process.env.USE_BACKEND_API === "true";
+    // Default: always run via FastAPI (Docker / VPS / local backend). `next dev` keeps NODE_ENV=development.
+    // Opt-in for a future in-process crew: USE_LOCAL_CREW=true (not implemented).
+    const useLocalCrew = process.env.USE_LOCAL_CREW === "true";
 
     let result: Record<string, unknown>;
 
-    // Priority: production & forced-backend always use Docker backend
-    if (isProduction || forceBackend) {
-      console.log("➡️ Routing to Backend Docker...");
+    if (!useLocalCrew) {
+      console.log("➡️ Routing to Backend (FastAPI) at %s", getFastAPIBaseUrl());
       result = await runCrewBackend(payload, request);
     } else {
-      console.log("➡️ Running Local Python...");
-      // Call local runCrew function here if enabled
-      throw new Error("Local mode is not enabled. Use the backend Docker.");
+      throw new Error("USE_LOCAL_CREW is enabled but in-process crew is not implemented. Unset USE_LOCAL_CREW.");
     }
 
     return NextResponse.json(result);
