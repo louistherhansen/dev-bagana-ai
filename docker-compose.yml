@@ -46,12 +46,14 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: bagana-ai-frontend
     restart: always
+    # Wajib production: jangan pakai `next dev` di VPS (log "Compiled /api/crew" = dev mode = route lama).
+    command: ["npm", "run", "start"]
     env_file:
       - .env
     environment:
+      NODE_ENV: production
       # BFF / API routes: ke FastAPI lewat nama service Docker (bukan localhost)
       BACKEND_API_URL: http://backend:8000
-      # next dev di container: NODE_ENV≠production; paksa jalur backend untuk /api/crew
       USE_BACKEND_API: "true"
       NEXT_PUBLIC_API_URL: http://localhost:8000
       DB_HOST: postgres
