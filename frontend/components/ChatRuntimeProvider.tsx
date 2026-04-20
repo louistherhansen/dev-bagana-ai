@@ -543,13 +543,23 @@ function createCrewAdapter(
           };
         }
 
-        // Parse response data
+        // Parse response data (read body exactly once to avoid "body stream already read")
+        const rawText = await res.text();
         let data: Record<string, any>;
         try {
-          data = await res.json();
-        } catch (parseError) {
-          const textErr = await res.text();
-          throw new Error(`Failed to parse response: ${textErr.slice(0, 100)}`);
+          if (!rawText || !rawText.trim()) {
+            data = {};
+          } else {
+            const parsed = JSON.parse(rawText);
+            data =
+              parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? (parsed as Record<string, any>)
+                : ({ value: parsed } as Record<string, any>);
+          }
+        } catch {
+          throw new Error(
+            `Failed to parse response (${res.status}): ${rawText.slice(0, 200)}`
+          );
         }
 
         if (!res.ok) {
